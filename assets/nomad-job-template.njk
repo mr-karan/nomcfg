@@ -1,0 +1,97 @@
+job "{{ jobSpec.job }}" {
+  {%- if jobSpec.datacenters %}
+  datacenters = [{% for dc in jobSpec.datacenters.split(',') %}"{{ dc.trim() }}"{% if not loop.last %}, {% endif %}{% endfor %}]
+  {%- endif %}
+  namespace = "{{ jobSpec.namespace }}"
+  type = "{{ jobSpec.type }}"
+  {%- if jobSpec.constraints and jobSpec.constraints.length > 0 %}
+  {% for constraint in jobSpec.constraints %}
+  constraint {
+    attribute = "{{ constraint.attribute }}"
+    operator  = "{{ constraint.operator }}"
+    value     = "{{ constraint.value }}"
+  }
+  {%- endfor %}
+  {%- endif %}
+  {%- if jobSpec.type === 'batch' and jobSpec.periodic and jobSpec.periodic.cron %}
+  periodic {
+    cron             = "{{ jobSpec.periodic.cron }}"
+    time_zone        = "{{ jobSpec.periodic.timeZone }}"
+    prohibit_overlap = true
+  }
+  {%- endif %}
+  {%- for group in jobSpec.groups %}
+  group "{{ group.name }}" {
+    count = {{ group.count }}
+
+    network {
+      mode = "{{ group.network.mode }}"
+      {%- if group.network.port %}
+      port "{{ group.network.port }}" {
+        to = {{ group.network.port }}
+      }
+      {%- endif %}
+    }
+    {%- if group.services and group.services.length > 0 %}
+    {% for service in group.services %}
+    service {
+      name = "{{ service.name }}"
+      port = "{{ service.port }}"
+    }
+    {%- endfor %}
+    {%- endif %}
+    {%- for task in group.tasks %}
+    task "{{ task.name }}" {
+      driver = "{{ task.driver }}"
+
+      config {
+        {%- if task.driver === 'docker' and task.config.image %}
+        image = "{{ task.config.image }}"
+        {%- endif %}
+        {%- if task.config.command %}
+        command = "{{ task.config.command }}"
+        {%- endif %}
+        {%- if task.config.args %}
+        args = [{% for arg in task.config.args.split(',') %}"{{ arg.trim() }}"{% if not loop.last %}, {% endif %}{% endfor %}]
+        {%- endif %}
+      }
+      {%- if task.env and task.env.length > 0 %}
+      env {
+        {%- for env in task.env %}
+        {{ env.key }} = "{{ env.value }}"
+        {%- endfor %}
+      }
+      {%- endif %}
+      resources {
+        cpu    = {{ task.resources.cpu }}
+        memory = {{ task.resources.memory }}
+      }
+      {%- if task.artifacts and task.artifacts.length > 0 %}
+      {% for artifact in task.artifacts %}
+      artifact {
+        source = "{{ artifact.source }}"
+      }
+      {%- endfor %}
+      {%- endif %}
+      {%- if task.templates and task.templates.length > 0 %}
+      {% for template in task.templates %}
+      template {
+        destination = "{{ template.destination }}"
+        data = <<EOH
+{{ template.data }}
+EOH
+        change_mode = "{{ template.change_mode }}"
+      }
+      {%- endfor %}
+      {%- endif %}
+      {%- if task.lifecycle and task.lifecycle.enabled %}
+      lifecycle {
+        hook    = "{{ task.lifecycle.hook }}"
+        sidecar = {{ task.lifecycle.sidecar }}
+      }
+      {%- endif %}
+    }
+    {%- endfor %}
+  }
+  {%- endfor %}
+}

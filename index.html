@@ -1,0 +1,460 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="cupcake">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Nomad Job Spec Generator</title>
+    <link href="https://cdn.jsdelivr.net/npm/daisyui@4.12.10/dist/full.min.css" rel="stylesheet" type="text/css" />
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="assets/nunjucks.min.js"></script>
+    <script src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css" rel="stylesheet">
+    <style>
+        .section-separator {
+            border-top: 1px dashed #ccc;
+            margin: 1rem 0;
+        }
+    </style>
+</head>
+
+<body>
+    <div x-data="jobSpecGenerator()" class="container mx-auto p-4">
+        <h1 class="text-3xl font-bold mb-4">Nomad Job Spec Generator</h1>
+
+        <div class="flex flex-col lg:flex-row gap-6">
+            <!-- Form (1/2 width on larger screens) -->
+            <div class="lg:w-1/2 space-y-4">
+                <!-- Job Configuration -->
+                <div class="card bg-base-100 shadow-xl">
+                    <div class="card-body">
+                        <h2 class="card-title"><i class="fas fa-cog mr-2"></i> Job Configuration</h2>
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div class="form-control">
+                                <label class="label" for="jobName">Job Name</label>
+                                <input x-model="jobSpec.job" id="jobName" type="text" placeholder="Job Name"
+                                    class="input input-bordered">
+                            </div>
+                            <div class="form-control">
+                                <label class="label" for="namespace">Namespace</label>
+                                <input x-model="jobSpec.namespace" id="namespace" type="text" placeholder="Namespace"
+                                    class="input input-bordered">
+                            </div>
+                            <div class="form-control">
+                                <label class="label" for="datacenters">Datacenters</label>
+                                <input x-model="jobSpec.datacenters" id="datacenters" type="text"
+                                    placeholder="Datacenters (comma-separated)" class="input input-bordered">
+                            </div>
+                            <div class="form-control">
+                                <label class="label" for="jobType">Job Type</label>
+                                <select x-model="jobSpec.type" id="jobType" class="select select-bordered">
+                                    <option value="service">Service</option>
+                                    <option value="batch">Batch</option>
+                                    <option value="system">System</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <!-- Job Constraints -->
+                        <div class="mt-4">
+                            <h3 class="font-semibold mb-2"><i class="fas fa-link mr-2"></i> Job Constraints</h3>
+                            <template x-for="(constraint, index) in jobSpec.constraints" :key="index">
+                                <div class="flex flex-wrap items-center space-x-2 mb-2">
+                                    <input x-model="constraint.attribute" type="text" placeholder="Attribute"
+                                        class="input input-bordered input-sm flex-grow mb-2">
+                                    <select x-model="constraint.operator" class="select select-bordered select-sm mb-2">
+                                        <option value="=">==</option>
+                                        <option value="!=">!=</option>
+                                        <option value=">">&gt;</option>
+                                        <option value=">=">&gt;=</option>
+                                        <option value="<">&lt;</option>
+                                        <option value="<=">&lt;=</option>
+                                    </select>
+                                    <input x-model="constraint.value" type="text" placeholder="Value"
+                                        class="input input-bordered input-sm flex-grow mb-2">
+                                    <button @click="removeJobConstraint(index)"
+                                        class="btn btn-square btn-sm btn-error mb-2">
+                                        <i class="fas fa-trash"></i>
+                                    </button>
+                                </div>
+                            </template>
+                            <button @click="addJobConstraint" class="btn btn-sm mt-2">
+                                <i class="fas fa-plus mr-2"></i> Add Constraint
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Periodic (for batch jobs) -->
+                <div x-show="jobSpec.type === 'batch'" class="card bg-base-100 shadow-xl">
+                    <div class="card-body">
+                        <h2 class="card-title"><i class="fas fa-clock mr-2"></i> Periodic Configuration</h2>
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div class="form-control">
+                                <label class="label" for="periodicCron">Cron</label>
+                                <input x-model="jobSpec.periodic.cron" id="periodicCron" type="text"
+                                    placeholder="Cron syntax" class="input input-bordered">
+                            </div>
+                            <div class="form-control">
+                                <label class="label" for="periodicTimezone">Timezone</label>
+                                <input x-model="jobSpec.periodic.timeZone" id="periodicTimezone" type="text"
+                                    placeholder="Timezone" class="input input-bordered">
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Groups -->
+                <div class="card bg-base-100 shadow-xl">
+                    <div class="card-body">
+                        <h2 class="card-title"><i class="fas fa-layer-group mr-2"></i> Groups</h2>
+                        <template x-for="(group, groupIndex) in jobSpec.groups" :key="groupIndex">
+                            <div class="card bg-base-200 shadow-md mb-4">
+                                <div class="card-body">
+                                    <div class="flex justify-between items-center">
+                                        <h3 class="card-title">
+                                            <i class="fas fa-cube mr-2"></i>
+                                            <span x-text="group.name || `Group ${groupIndex + 1}`"></span>
+                                        </h3>
+                                        <button @click="group.collapsed = !group.collapsed" class="btn btn-sm">
+                                            <i
+                                                :class="group.collapsed ? 'fas fa-chevron-down' : 'fas fa-chevron-up'"></i>
+                                        </button>
+                                    </div>
+                                    <div x-show="!group.collapsed">
+                                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                            <div class="form-control">
+                                                <label class="label" :for="`groupName${groupIndex}`">Group Name</label>
+                                                <input x-model="group.name" :id="`groupName${groupIndex}`" type="text"
+                                                    placeholder="Group Name" class="input input-bordered">
+                                            </div>
+                                            <div class="form-control">
+                                                <label class="label" :for="`groupCount${groupIndex}`">Count</label>
+                                                <input x-model="group.count" :id="`groupCount${groupIndex}`"
+                                                    type="number" placeholder="Count" class="input input-bordered">
+                                            </div>
+                                        </div>
+
+                                        <div class="section-separator"></div>
+
+                                        <!-- Network -->
+                                        <div class="mt-4">
+                                            <h4 class="font-semibold"><i class="fas fa-network-wired mr-2"></i> Network
+                                            </h4>
+                                            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                                <div class="form-control">
+                                                    <label class="label" :for="`networkMode${groupIndex}`">Mode</label>
+                                                    <select x-model="group.network.mode"
+                                                        :id="`networkMode${groupIndex}`" class="select select-bordered">
+                                                        <option value="host">Host</option>
+                                                        <option value="bridge">Bridge</option>
+                                                    </select>
+                                                </div>
+                                                <div class="form-control">
+                                                    <label class="label" :for="`networkPort${groupIndex}`">Port</label>
+                                                    <input x-model="group.network.port" :id="`networkPort${groupIndex}`"
+                                                        type="number" placeholder="Port" class="input input-bordered">
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        <div class="section-separator"></div>
+
+                                        <!-- Service -->
+                                        <div class="mt-4">
+                                            <div class="flex justify-between items-center mb-2">
+                                                <h4 class="font-semibold"><i class="fas fa-server mr-2"></i> Services
+                                                </h4>
+                                                <button @click="addService(groupIndex)" class="btn btn-sm">
+                                                    <i class="fas fa-plus mr-2"></i> Add Service
+                                                </button>
+                                            </div>
+                                            <template x-for="(service, serviceIndex) in group.services"
+                                                :key="serviceIndex">
+                                                <div class="mb-4 p-4 border rounded">
+                                                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                                        <div class="form-control">
+                                                            <label class="label"
+                                                                :for="`serviceName${groupIndex}${serviceIndex}`">Name</label>
+                                                            <input x-model="service.name"
+                                                                :id="`serviceName${groupIndex}${serviceIndex}`"
+                                                                type="text" placeholder="Service Name"
+                                                                class="input input-bordered">
+                                                        </div>
+                                                        <div class="form-control">
+                                                            <label class="label"
+                                                                :for="`servicePort${groupIndex}${serviceIndex}`">Port</label>
+                                                            <input x-model="service.port"
+                                                                :id="`servicePort${groupIndex}${serviceIndex}`"
+                                                                type="text" placeholder="Service Port"
+                                                                class="input input-bordered">
+                                                        </div>
+                                                    </div>
+                                                    <button @click="removeService(groupIndex, serviceIndex)"
+                                                        class="btn btn-sm btn-error mt-2">
+                                                        <i class="fas fa-trash mr-2"></i> Remove Service
+                                                    </button>
+                                                </div>
+                                            </template>
+                                        </div>
+
+                                        <div class="section-separator"></div>
+
+                                        <!-- Tasks -->
+                                        <div class="mt-4">
+                                            <div class="flex justify-between items-center mb-2">
+                                                <h4 class="font-semibold"><i class="fas fa-tasks mr-2"></i> Tasks</h4>
+                                                <button @click="addTask(groupIndex)" class="btn btn-sm">
+                                                    <i class="fas fa-plus mr-2"></i> Add Task
+                                                </button>
+                                            </div>
+                                            <template x-for="(task, taskIndex) in group.tasks" :key="taskIndex">
+                                                <div class="card bg-base-100 shadow-sm mb-4">
+                                                    <div class="card-body">
+                                                        <div class="flex justify-between items-center">
+                                                            <h5 class="card-title">
+                                                                <i class="fas fa-cogs mr-2"></i>
+                                                                <span
+                                                                    x-text="task.name || `Task ${taskIndex + 1}`"></span>
+                                                            </h5>
+                                                            <button @click="task.collapsed = !task.collapsed"
+                                                                class="btn btn-sm">
+                                                                <i
+                                                                    :class="task.collapsed ? 'fas fa-chevron-down' : 'fas fa-chevron-up'"></i>
+                                                            </button>
+                                                        </div>
+                                                        <div x-show="!task.collapsed">
+                                                            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                                                <div class="form-control">
+                                                                    <label class="label"
+                                                                        :for="`taskName${groupIndex}${taskIndex}`">Task
+                                                                        Name</label>
+                                                                    <input x-model="task.name"
+                                                                        :id="`taskName${groupIndex}${taskIndex}`"
+                                                                        type="text" placeholder="Task Name"
+                                                                        class="input input-bordered">
+                                                                </div>
+                                                                <div class="form-control">
+                                                                    <label class="label"
+                                                                        :for="`taskDriver${groupIndex}${taskIndex}`">Driver</label>
+                                                                    <select x-model="task.driver"
+                                                                        :id="`taskDriver${groupIndex}${taskIndex}`"
+                                                                        class="select select-bordered">
+                                                                        <option value="docker">Docker</option>
+                                                                        <option value="exec">Exec</option>
+                                                                        <option value="raw_exec">Raw Exec</option>
+                                                                    </select>
+                                                                </div>
+                                                                <div x-show="task.driver === 'docker'"
+                                                                    class="form-control">
+                                                                    <label class="label"
+                                                                        :for="`taskImage${groupIndex}${taskIndex}`">Docker
+                                                                        Image</label>
+                                                                    <input x-model="task.config.image"
+                                                                        :id="`taskImage${groupIndex}${taskIndex}`"
+                                                                        type="text" placeholder="Docker Image"
+                                                                        class="input input-bordered">
+                                                                </div>
+                                                                <div class="form-control">
+                                                                    <label class="label"
+                                                                        :for="`taskCommand${groupIndex}${taskIndex}`">Command</label>
+                                                                    <input x-model="task.config.command"
+                                                                        :id="`taskCommand${groupIndex}${taskIndex}`"
+                                                                        type="text" placeholder="Command"
+                                                                        class="input input-bordered">
+                                                                </div>
+                                                                <div class="form-control">
+                                                                    <label class="label"
+                                                                        :for="`taskArgs${groupIndex}${taskIndex}`">Args</label>
+                                                                    <input x-model="task.config.args"
+                                                                        :id="`taskArgs${groupIndex}${taskIndex}`"
+                                                                        type="text" placeholder="Args (comma-separated)"
+                                                                        class="input input-bordered">
+                                                                </div>
+                                                            </div>
+
+                                                            <div class="section-separator"></div>
+
+                                                            <!-- Lifecycle -->
+                                                            <div class="form-control mt-4">
+                                                                <label class="label cursor-pointer">
+                                                                    <span class="label-text">Lifecycle Hook</span>
+                                                                    <input type="checkbox"
+                                                                        x-model="task.lifecycle.enabled"
+                                                                        class="checkbox">
+                                                                </label>
+                                                                <div x-show="task.lifecycle.enabled" class="mt-2">
+                                                                    <select x-model="task.lifecycle.hook"
+                                                                        class="select select-bordered w-full max-w-xs">
+                                                                        <option value="prestart">Prestart</option>
+                                                                        <option value="poststart">Poststart</option>
+                                                                        <option value="poststop">Poststop</option>
+                                                                    </select>
+                                                                    <label class="label cursor-pointer mt-2">
+                                                                        <span class="label-text">Sidecar</span>
+                                                                        <input type="checkbox"
+                                                                            x-model="task.lifecycle.sidecar"
+                                                                            class="checkbox">
+                                                                    </label>
+                                                                </div>
+                                                            </div>
+
+                                                            <div class="section-separator"></div>
+
+                                                            <!-- Environment Variables -->
+                                                            <div class="mt-4">
+                                                                <div class="flex justify-between items-center mb-2">
+                                                                    <h6 class="font-semibold">
+                                                                        <i class="fas fa-env mr-2"></i>
+                                                                        Environment Variables
+                                                                    </h6>
+                                                                    <button @click="addEnvVar(groupIndex, taskIndex)"
+                                                                        class="btn btn-sm">
+                                                                        <i class="fas fa-plus mr-2"></i> Add Env Var
+                                                                    </button>
+                                                                </div>
+                                                                <template x-for="(envVar, envIndex) in task.env"
+                                                                    :key="envIndex">
+                                                                    <div class="flex items-center space-x-2 mb-2">
+                                                                        <input x-model="envVar.key" type="text"
+                                                                            placeholder="Key"
+                                                                            class="input input-bordered input-sm flex-grow">
+                                                                        <input x-model="envVar.value" type="text"
+                                                                            placeholder="Value"
+                                                                            class="input input-bordered input-sm flex-grow">
+                                                                        <button
+                                                                            @click="removeEnvVar(groupIndex, taskIndex, envIndex)"
+                                                                            class="btn btn-square btn-sm btn-error">
+                                                                            <i class="fas fa-trash"></i>
+                                                                        </button>
+                                                                    </div>
+                                                                </template>
+                                                            </div>
+
+                                                            <div class="section-separator"></div>
+
+                                                            <!-- Artifacts -->
+                                                            <div class="mt-4">
+                                                                <div class="flex justify-between items-center mb-2">
+                                                                    <h6 class="font-semibold">
+                                                                        <i class="fas fa-file-archive mr-2"></i>
+                                                                        Artifacts
+                                                                    </h6>
+                                                                    <button @click="addArtifact(groupIndex, taskIndex)"
+                                                                        class="btn btn-sm">
+                                                                        <i class="fas fa-plus mr-2"></i> Add Artifact
+                                                                    </button>
+                                                                </div>
+                                                                <template
+                                                                    x-for="(artifact, artifactIndex) in task.artifacts"
+                                                                    :key="artifactIndex">
+                                                                    <div
+                                                                        class="flex flex-wrap items-center space-x-2 mb-2">
+                                                                        <input x-model="artifact.source" type="text"
+                                                                            placeholder="Artifact source"
+                                                                            class="input input-bordered input-sm flex-grow mb-2">
+                                                                        <button
+                                                                            @click="removeArtifact(groupIndex, taskIndex, artifactIndex)"
+                                                                            class="btn btn-square btn-sm btn-error mb-2">
+                                                                            <i class="fas fa-trash"></i>
+                                                                        </button>
+                                                                    </div>
+                                                                </template>
+                                                            </div>
+
+                                                            <div class="section-separator"></div>
+
+                                                            <!-- Templates -->
+                                                            <div class="mt-4">
+                                                                <div class="flex justify-between items-center mb-2">
+                                                                    <h6 class="font-semibold">
+                                                                        <i class="fas fa-file-code mr-2"></i>
+                                                                        Templates
+                                                                    </h6>
+                                                                    <button @click="addTemplate(groupIndex, taskIndex)"
+                                                                        class="btn btn-sm">
+                                                                        <i class="fas fa-plus mr-2"></i> Add Template
+                                                                    </button>
+                                                                </div>
+                                                                <template
+                                                                    x-for="(template, templateIndex) in task.templates"
+                                                                    :key="templateIndex">
+                                                                    <div class="mb-2">
+                                                                        <input x-model="template.destination"
+                                                                            type="text"
+                                                                            placeholder="Template destination"
+                                                                            class="input input-bordered w-full mb-2">
+                                                                        <textarea x-model="template.data" rows="3"
+                                                                            placeholder="Template data"
+                                                                            class="textarea textarea-bordered w-full"></textarea>
+                                                                        <button
+                                                                            @click="removeTemplate(groupIndex, taskIndex, templateIndex)"
+                                                                            class="btn btn-sm btn-error mt-2">
+                                                                            <i class="fas fa-trash mr-2"></i> Remove
+                                                                            Template
+                                                                        </button>
+                                                                    </div>
+                                                                </template>
+                                                            </div>
+
+                                                            <button @click="removeTask(groupIndex, taskIndex)"
+                                                                class="btn btn-sm btn-error mt-4">
+                                                                <i class="fas fa-trash mr-2"></i> Remove Task
+                                                            </button>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </template>
+                                        </div>
+
+                                        <button @click="removeGroup(groupIndex)" class="btn btn-sm btn-error mt-4">
+                                            <i class="fas fa-trash mr-2"></i> Remove Group
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </template>
+                        <button @click="addGroup" class="btn btn-sm mt-2">
+                            <i class="fas fa-plus mr-2"></i> Add Group
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Generated Spec (1/2 width on larger screens) -->
+            <div class="lg:w-1/2">
+                <div class="card bg-base-100 shadow-xl sticky top-4">
+                    <div class="card-body">
+                        <div class="flex justify-between items-center mb-4">
+                            <h2 class="card-title"><i class="fas fa-code mr-2"></i> Generated Spec</h2>
+                            <button @click="copyToClipboard" class="btn btn-sm" x-data="{ copied: false }"
+                                x-on:click="copied = true; setTimeout(() => copied = false, 2000)">
+                                <i class="fas fa-copy mr-2"></i>
+                                <span x-text="copied ? 'Copied!' : 'Copy'"></span>
+                            </button>
+                        </div>
+                        <pre
+                            class="bg-base-200 p-4 rounded-lg overflow-x-auto"><code x-text="templateLoaded ? generateSpec().trim() : 'Loading template...'"></code></pre>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+    </div>
+    <footer class="footer footer-center p-4 mt-4 text-base-content">
+        <div>
+            <p class="inline-flex items-center">
+                Made with <i class="fas fa-heart text-red-500 mx-1"></i> by
+                <a href="https://mrkaran.dev" class="link link-hover ml-1">@mr-karan</a>
+            </p>
+            <p class="inline-flex items-center ml-4">
+                <i class="fab fa-github mr-1"></i>
+                <a href="https://github.com/mr-karan/nomad-job-spec-generator" class="link link-hover">View Source</a>
+            </p>
+        </div>
+    </footer>
+
+    <script src="assets/app.js"></script>
+</body>
+
+</html>
